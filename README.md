@@ -2,6 +2,8 @@
 
 A lightweight desktop GUI application built in Python & Tkinter that patches sliced 3D printing G-code files with automated shutter-trigger macros for smooth, layer-by-layer 3D printing timelapses[cite: 1, 2].
 
+<img width="535" height="535" alt="image" src="https://github.com/user-attachments/assets/d417d434-d7f2-4902-8f31-349f28a870c0" />
+
 ## Features
 - **Universal Slicer Support:** Automatically detects layer markers from OrcaSlicer, PrusaSlicer (`; AFTER_LAYER_CHANGE` / `;LAYER_CHANGE`), and Cura (`;LAYER:`)[cite: 1, 2].
 - **Physical Shutter Triggering:** Parks the print head at a custom X/Y coordinate to press a physical Bluetooth or wired camera shutter button, complete with approach distance and anti-shake settle delays[cite: 1, 2].
