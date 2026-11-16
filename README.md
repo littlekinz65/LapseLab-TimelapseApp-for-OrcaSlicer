@@ -1,39 +1,56 @@
 # Lapse Lab by Little
 
-A lightweight desktop GUI application built in Python & Tkinter that patches sliced 3D printing G-code files with automated shutter-trigger macros for smooth, layer-by-layer 3D printing timelapses[cite: 1, 2].
+A lightweight G-code post-processing utility built for FDM 3D printers (such as the Anycubic Kobra 2 Neo) to automate smooth, park-and-trigger 3D printing timelapses using a physical camera shutter remote or limit switch[cite: 8]. Instead of relying on OctoPrint or firmware-level webcam plugins, it injects precise motion, retraction, Z-hop, and dwell commands directly into sliced G-code files[cite: 8].
+<img width="535" height="535" alt="image" src="https://github.com/user-attachments/assets/2dd4683f-b809-464e-9e14-ff67bb9ad344" />
 
-<img width="535" height="535" alt="image" src="https://github.com/user-attachments/assets/d417d434-d7f2-4902-8f31-349f28a870c0" />
 
-## Features
-- **Universal Slicer Support:** Automatically detects layer markers from OrcaSlicer, PrusaSlicer (`; AFTER_LAYER_CHANGE` / `;LAYER_CHANGE`), and Cura (`;LAYER:`)[cite: 1, 2].
-- **Physical Shutter Triggering:** Parks the print head at a custom X/Y coordinate to press a physical Bluetooth or wired camera shutter button, complete with approach distance and anti-shake settle delays[cite: 1, 2].
-- **Print Quality Protection:** Built-in filament retraction, Z-hop lift before travel, and nozzle priming after each frame to prevent oozing, stringing, and surface blobs[cite: 1, 2].
-- **Flexible Capture Intervals:** Trigger every layer or every 2nd, 3rd, 5th, 10th, or 25th layer, plus an option to ensure a final completion frame[cite: 1, 2].
-- **Accurate Print Time Estimation:** Recalculates the total print duration (`;TIME:`) by factoring in travel, Z-hop, and dwell times, and appends the updated duration directly to the output filename[cite: 1, 2].
+## Dual Operating Modes
 
-## Parameter Guide
+Lapse Lab automatically adapts its interface and file-handling workflow depending on how it is launched[cite: 7, 8]:
 
-| Parameter | Default | Unit | Description |
+- **Standalone Mode (Manual Patching):** When launched directly from the desktop shortcut, Start Menu, or `LapseLab.exe`, the app lets you browse for any pre-sliced `.gcode` file[cite: 8]. After injecting the timelapse macros, it recalculates the total print duration, updates internal `;TIME:` metadata, and prompts you to save a new copy (`<filename>_timelapse_<duration>.gcode`) without overwriting your original file[cite: 7, 8].
+
+
+
+- **Slicer Plugin Mode (Anycubic Slicer Next Integration):** When selected via one of the dedicated `(LapseLab)` process presets in Anycubic Slicer Next, slicing and exporting G-code launches Lapse Lab automatically with the temporary `.gcode` file pre-loaded and the file browser locked[cite: 7, 8]. Once you configure your capture settings and click **Apply Timelapse & Return to Slicer**, Lapse Lab patches the temporary file in place and closes cleanly so the slicer immediately finishes exporting[cite: 7, 8].
+
+<img width="1599" height="852" alt="image" src="https://github.com/user-attachments/assets/738de8c3-fd17-4fde-acc5-0cffc2dd14e4" />
+
+## Configurable Timelapse & Motion Parameters
+
+<img width="536" height="538" alt="image" src="https://github.com/user-attachments/assets/eac56005-2f04-4eb1-ad44-36e9e014f1a8" />
+
+
+Every parameter in the right-hand control panel directly maps to the G-code macro injected between layers[cite: 7, 8]:
+
+| Parameter | Default | Unit | Function & G-code Behavior |
 | :--- | :--- | :--- | :--- |
-| **How often (layers)** | `Every Layer` | Layers | Sets the capture interval (`Every Layer`, `Every 2nd`, `Every 3rd`, `Every 5th`, `Every 10th`, or `Every 25th`). Useful for shortening final video length on tall prints[cite: 1, 2]. |
-| **Pause before click (anti-shake)** | `250` | `ms` | Dwell time (`G4`) after the print head parks at the pre-click position, allowing printer vibrations to settle before taking a photo[cite: 1, 2]. |
-| **Button Pressing Time** | `150` | `ms` | How long the print head holds the physical shutter button pressed (`G4`) so the camera/phone reliably registers the trigger[cite: 1, 2]. |
-| **Pause after image** | `600` | `ms` | Wait time after releasing the shutter button, giving the camera sensor time to capture and save the frame before the print head moves back[cite: 1, 2]. |
-| **Shutter Click X Location** | `228.0` | `mm` | The exact X-axis coordinate where the toolhead physically presses the shutter switch[cite: 1, 2]. |
-| **Approach / Pre-click Distance** | `2.0` | `mm` | The offset distance before `Shutter Click X Location` (`Shutter X - Approach Distance`) where the toolhead initially parks before moving in slowly (`F3000`) to press the button[cite: 1, 2]. |
-| **Park Print Head Y (Focus)** | `190.0` | `mm` | The Y-axis position where the bed/print head parks during photo capture—ideal for positioning the print cleanly in your camera's focal plane[cite: 1, 2]. |
-| **Retract when required** | `ON` | Toggle | Retracts filament (`0.8 mm` at `F3000`) before parking and primes it (`0.8 mm` at `F2400`) upon returning to prevent oozing onto the print[cite: 1, 2]. |
-| **Z-Hop Height When Parking** | `2.0` | `mm` | Lifts the nozzle vertically by this amount before traveling to the shutter button and lowers it back afterward, preventing nozzle collisions or scarring on the top layer (set to `0` to disable)[cite: 1, 2]. |
-| **Ensure Final Image** | `ON` | Toggle | Appends one final shutter-trigger sequence at the very end of the G-code so the completed model is always captured[cite: 1, 2]. |
+| **How often (layers)** | `Every Layer` | Layers | Sets capture frequency (`Every Layer`, `2nd`, `3rd`, `5th`, `10th`, or `25th`), allowing shorter timelapses on tall prints[cite: 7, 8]. |
+| **Pause before click (anti-shake)** | `250` | `ms` | Inserts a `G4 P<ms>` dwell after parking so gantry vibrations settle before triggering the shutter[cite: 7, 8]. |
+| **Button Pressing Time** | `150` | `ms` | Controls how long the printhead holds the physical shutter switch depressed (`G4 P<ms>`) to ensure reliable camera focus and capture[cite: 7, 8]. |
+| **Pause after image** | `600` | `ms` | Holds the printhead stationary (`G4 P<ms>`) while the camera writes the photo to storage, preventing motion blur in the frame[cite: 7, 8]. |
+| **Shutter Click X Location** | `228.0` | `mm` | The exact X-axis coordinate where the toolhead physically presses the mounted shutter switch (`G1 X<val> F3000`)[cite: 7, 8]. |
+| **Approach / Pre-click Distance** | `2.0` | `mm` | Positions the toolhead just short of the trigger (`Shutter X - Approach`) before decelerating into the button press, avoiding hard mechanical impacts[cite: 7, 8]. |
+| **Park Print Head Y (Focus)** | `190.0` | `mm` | Moves the build plate forward along the Y-axis (`G0 Y<val>`) to frame the printed model cleanly in the camera's focal plane[cite: 7, 8]. |
+| **Retract when required** | `ON` | Toggle | Performs a `0.80 mm` filament retraction (`G1 E-0.80 F3000`) before parking and primes (`G1 E0.80 F2400`) upon returning to prevent oozing and stringing[cite: 7, 8]. |
+| **Z-Hop Height When Parking** | `2.0` | `mm` | Lifts the nozzle vertically (`G0 Z<val> F3000`) in relative mode (`G91`) before traveling across the print bed, then lowers it back before resuming extrusion[cite: 7, 8]. |
+| **Ensure Final Image** | `ON` | Toggle | Appends an end-of-print capture macro at the end of the G-code so the completed model is always photographed after the final layer finishes[cite: 7, 8]. |
 
-## Usage
-1. Slice your 3D model in OrcaSlicer, PrusaSlicer, or Cura and export the `.gcode` file[cite: 1, 2].
-2. Open **Lapse Lab** and click **Browse...** to load your `.gcode` file[cite: 1, 2].
-3. Adjust your shutter X-coordinate, Y-parking position, and timing delays to match your physical shutter mount and camera speed[cite: 1, 2].
-4. Click **Patch G-code & Save File As...** to export the timelapse-ready file (automatically named with `_timelapse` and the recalculated print duration)[cite: 1, 2].
+## Smart G-code Processing & Safety Features
+
+- **Multi-Slicer Layer Marker Detection:** Automatically parses layer transitions across Anycubic Slicer Next, OrcaSlicer, PrusaSlicer (`; AFTER_LAYER_CHANGE` / `;LAYER_CHANGE`), and Cura (`;LAYER:`)[cite: 7, 8].
+- **Idempotent Re-Patching:** Automatically detects and strips any previously injected Lapse Lab macro blocks (`; --- Upgraded Timelapse Macro Begin ---` through `End ---`) before applying new settings, preventing duplicate triggers if a file is patched twice[cite: 7, 8].
+- **Motion Synchronization (`M400`):** Wraps travel moves and shutter clicks with `M400` planner-sync commands so the printer never fires the shutter early while moves are still buffered[cite: 7, 8].
+- **Accurate Print Time Recalculation:** Parses the slicer's original estimated print time, adds the exact travel, Z-hop, shutter press, and dwell overhead for every triggered layer, updates the `;TIME:` header, and appends the updated duration (e.g., `_2h14m30s`) to the exported filename[cite: 7, 8].
+
+## Installer & Slicer Integration Architecture
+
+- **Zero-Dependency Executable:** Packaged as a standalone Windows `.exe` (`LapseLab.exe`) with Python, Tkinter, Pillow, and UI assets bundled internally—end users do not need Python or external libraries installed[cite: 8].
+- **Automated Preset Provisioning:** The Windows installer (`LapseLab_Setup.exe`) detects Anycubic Slicer Next, installs `LapseLab.exe` into `C:\Program Files\AnycubicSlicerNext\scripts\`, and registers 5 dedicated user presets (`0.12mm` through `0.28mm Standard @Anycubic Kobra 2 Neo 0.4 nozzle (LapseLab)`) alongside the factory presets with the post-processing path pre-configured[cite: 8].
+- **Clean Uninstallation:** Uninstalling through Windows Settings automatically removes `LapseLab.exe`, desktop/Start Menu shortcuts, and all generated `(LapseLab)` `.json` and `.info` preset files from Anycubic Slicer Next without altering factory profiles[cite: 8].
 
 ## Requirements (Running from Source)
 - Python 3.8+
-- `Pillow` *(optional, for high-resolution sidebar splash image rendering)*[cite: 1, 2]:
+- `Pillow` *(optional, for high-resolution sidebar splash image rendering)*:
   ```bash
   pip install pillow
