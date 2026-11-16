@@ -135,6 +135,7 @@ class AnycubicTimelapseApp:
         self.zhop_var = tk.DoubleVar(value=2.0)
         self.ensure_final_var = tk.BooleanVar(value=True)
         self.is_processing = False
+        self.slicer_mode = False
 
         self.build_ui()
 
@@ -170,13 +171,15 @@ class AnycubicTimelapseApp:
         right_frame = ttk.Frame(main_frame, padding=(8, 4, 6, 2))
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        ttk.Label(right_frame, text="Add your Sliced GCode", style="Title.TLabel").pack(anchor="w", pady=(2, 6))
+        self.header_label = ttk.Label(right_frame, text="Add your Sliced GCode", style="Title.TLabel")
+        self.header_label.pack(anchor="w", pady=(2, 6))
 
         file_frame = ttk.Frame(right_frame)
         file_frame.pack(fill=tk.X, pady=(0, 8))
-        file_entry = ttk.Entry(file_frame, textvariable=self.filepath_var, font=("Segoe UI", 9))
-        file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=2)
-        ttk.Button(file_frame, text="Browse...", width=9, command=self.browse_file).pack(side=tk.RIGHT)
+        self.file_entry = ttk.Entry(file_frame, textvariable=self.filepath_var, font=("Segoe UI", 9))
+        self.file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6), ipady=2)
+        self.browse_btn = ttk.Button(file_frame, text="Browse...", width=9, command=self.browse_file)
+        self.browse_btn.pack(side=tk.RIGHT)
 
         ttk.Separator(right_frame, orient="horizontal").pack(fill=tk.X, pady=(2, 6))
 
@@ -223,6 +226,16 @@ class AnycubicTimelapseApp:
         self.action_btn = ttk.Button(bottom_frame, text="Patch G-code & Save File As...",
                                      style="Action.TButton", command=self.start_processing)
         self.action_btn.pack(fill=tk.X, ipady=5)
+
+    def enable_slicer_mode(self, gcode_path):
+        """Configures UI when invoked automatically by Anycubic Slicer Next."""
+        self.slicer_mode = True
+        self.filepath_var.set(gcode_path)
+        self.header_label.configure(text="Slicer Post-Processing")
+        self.file_entry.configure(state="readonly")
+        self.browse_btn.configure(state="disabled")
+        self.status_var.set(f"Ready: {os.path.basename(gcode_path)}")
+        self.action_btn.configure(text="Apply Timelapse & Return to Slicer")
 
     def add_field(self, parent, row, label_text, var, unit):
         ttk.Label(parent, text=label_text).grid(row=row, column=0, sticky="w", pady=2)
@@ -406,6 +419,14 @@ class AnycubicTimelapseApp:
             new_s = new_total_seconds % 60
             time_suffix = f"_{new_h}h{new_m}m{new_s}s" if new_h > 0 else f"_{new_m}m{new_s}s"
 
+            if self.slicer_mode:
+                # Overwrite the slicer's temporary G-code file in-place and close
+                with open(src_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(patched_content)
+                self.root.destroy()
+                return
+
+            # Standalone Mode: prompt user where to save
             dir_name, full_file_name = os.path.split(src_path)
             base_name, ext = os.path.splitext(full_file_name)
             clean_base = re.sub(r"_(\d+d)?(\d+h)?(\d+m)?(\d+s)?$", "", base_name, flags=re.IGNORECASE)
@@ -441,16 +462,16 @@ class AnycubicTimelapseApp:
             messagebox.showerror("Processing Error", f"An error occurred while parsing:\n{str(e)}")
 
         finally:
-            self.is_processing = False
-            self.action_btn.configure(state="normal")
+            if not self.slicer_mode:
+                self.is_processing = False
+                self.action_btn.configure(state="normal")
 
 
 def main():
     root = tk.Tk()
     app = AnycubicTimelapseApp(root)
     if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
-        app.filepath_var.set(sys.argv[1])
-        app.status_var.set(f"Selected: {os.path.basename(sys.argv[1])}")
+        app.enable_slicer_mode(sys.argv[1])
 
     root.mainloop()
 
