@@ -1,6 +1,9 @@
 import os
 import sys
 import re
+import json
+import zipfile
+import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -15,6 +18,14 @@ def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller --onefile."""
     base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, relative_path)
+
+
+def get_config_path():
+    """Store user coordinates and timing preferences persistently in AppData."""
+    app_data = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+    cfg_dir = os.path.join(app_data, "LapseLab")
+    os.makedirs(cfg_dir, exist_ok=True)
+    return os.path.join(cfg_dir, "config.json")
 
 
 class ToggleSwitch(tk.Canvas):
@@ -43,12 +54,10 @@ class ToggleSwitch(tk.Canvas):
         track_color = self.on_color if state else self.off_color
         r = self.height // 2
 
-        # Pill track
         self.create_oval(1, 1, self.height - 1, self.height - 1, fill=track_color, outline=track_color)
         self.create_oval(self.width - self.height + 1, 1, self.width - 1, self.height - 1, fill=track_color, outline=track_color)
         self.create_rectangle(r, 1, self.width - r, self.height - 1, fill=track_color, outline=track_color)
 
-        # Sliding circular knob
         pad = 3
         knob_d = self.height - (pad * 2)
         x_pos = (self.width - knob_d - pad) if state else pad
@@ -61,7 +70,7 @@ class SmoothProgressBar(tk.Canvas):
         super().__init__(parent, height=height, bg=track_color, highlightthickness=0, bd=0)
         self.height = height
         self.track_color = track_color
-        self.progress = 0.0  # 0.0 to 1.0
+        self.progress = 0.0
         self.bind("<Configure>", lambda e: self.draw())
 
     def set_progress(self, value):
@@ -79,7 +88,6 @@ class SmoothProgressBar(tk.Canvas):
         if fill_w <= 0:
             return
 
-        # Smooth green gradient (#4eb832 -> #8ce02c)
         r1, g1, b1 = 0x4e, 0xb8, 0x32
         r2, g2, b2 = 0x8c, 0xe0, 0x2c
         steps = max(1, min(fill_w, 60))
@@ -103,7 +111,6 @@ class AnycubicTimelapseApp:
         self.root.geometry("537x507")
         self.root.resizable(False, False)
 
-        # Set window icon if available
         icon_file = resource_path("icon.ico")
         if os.path.exists(icon_file):
             try:
@@ -123,6 +130,7 @@ class AnycubicTimelapseApp:
         self.style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), foreground="#ffffff", background="#0066cc")
         self.style.map("Action.TButton", background=[("active", "#004c99"), ("disabled", "#cccccc")])
 
+        # Your exact default values
         self.filepath_var = tk.StringVar()
         self.frequency_var = tk.StringVar(value="Every Layer")
         self.anti_shake_var = tk.IntVar(value=250)
@@ -134,10 +142,52 @@ class AnycubicTimelapseApp:
         self.retract_var = tk.BooleanVar(value=True)
         self.zhop_var = tk.DoubleVar(value=2.0)
         self.ensure_final_var = tk.BooleanVar(value=True)
+
         self.is_processing = False
         self.slicer_mode = False
 
+        self.load_config()
         self.build_ui()
+
+    def load_config(self):
+        """Restore previously saved user settings if available."""
+        cfg_file = get_config_path()
+        if os.path.exists(cfg_file):
+            try:
+                with open(cfg_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.frequency_var.set(data.get("frequency", "Every Layer"))
+                self.anti_shake_var.set(int(data.get("anti_shake", 250)))
+                self.button_press_var.set(int(data.get("button_press", 150)))
+                self.pause_after_var.set(int(data.get("pause_after", 600)))
+                self.shutter_x_var.set(float(data.get("shutter_x", 228.0)))
+                self.approach_dist_var.set(float(data.get("approach_dist", 2.0)))
+                self.park_y_var.set(float(data.get("park_y", 190.0)))
+                self.retract_var.set(bool(data.get("retract", True)))
+                self.zhop_var.set(float(data.get("zhop", 2.0)))
+                self.ensure_final_var.set(bool(data.get("ensure_final", True)))
+            except Exception:
+                pass
+
+    def save_config(self):
+        """Save current UI parameters so user doesn't have to re-enter X/Y coords."""
+        try:
+            data = {
+                "frequency": self.frequency_var.get(),
+                "anti_shake": int(self.anti_shake_var.get()),
+                "button_press": int(self.button_press_var.get()),
+                "pause_after": int(self.pause_after_var.get()),
+                "shutter_x": float(self.shutter_x_var.get()),
+                "approach_dist": float(self.approach_dist_var.get()),
+                "park_y": float(self.park_y_var.get()),
+                "retract": bool(self.retract_var.get()),
+                "zhop": float(self.zhop_var.get()),
+                "ensure_final": bool(self.ensure_final_var.get())
+            }
+            with open(get_config_path(), "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
 
     def build_ui(self):
         main_frame = ttk.Frame(self.root, padding="8")
@@ -219,7 +269,7 @@ class AnycubicTimelapseApp:
         self.progress_bar = SmoothProgressBar(bottom_frame, height=13)
         self.progress_bar.pack(fill=tk.X, pady=(0, 6))
 
-        self.status_var = tk.StringVar(value="Select a G-code file to process.")
+        self.status_var = tk.StringVar(value="Select a .gcode or .gcode.3mf file.")
         ttk.Label(bottom_frame, textvariable=self.status_var, foreground="#555555",
                   font=("Segoe UI", 8), wraplength=275).pack(anchor="w", pady=(0, 6))
 
@@ -249,7 +299,15 @@ class AnycubicTimelapseApp:
         toggle.grid(row=row, column=1, sticky="w", padx=(2, 4), pady=3)
 
     def browse_file(self):
-        f = filedialog.askopenfilename(title="Select G-code File", filetypes=[("G-code Files", "*.gcode"), ("All Files", "*.*")])
+        f = filedialog.askopenfilename(
+            title="Select G-code or 3MF File",
+            filetypes=[
+                ("Supported G-code Files", "*.gcode *.gcode.3mf *.3mf"),
+                ("G-code Files", "*.gcode"),
+                ("Orca/Bambu 3MF Files", "*.gcode.3mf *.3mf"),
+                ("All Files", "*.*")
+            ]
+        )
         if f:
             self.filepath_var.set(f)
             self.progress_bar.set_progress(0.0)
@@ -266,21 +324,200 @@ class AnycubicTimelapseApp:
         secs = int(s.group(1)) if s else 0
         return days * 86400 + hours * 3600 + mins * 60 + secs
 
+    def detect_extrusion_mode(self, content):
+        """Detect whether the sliced file uses M82 (Absolute) or M83 (Relative) extrusion."""
+        m82_pos = content.rfind("M82")
+        m83_pos = content.rfind("M83")
+        if m82_pos > m83_pos:
+            return "M82"
+        return "M83"
+
+    def patch_gcode_text(self, content):
+        """Patches raw G-code text and returns (patched_content, new_total_seconds)."""
+        content = re.sub(
+            r"; --- (?:Upgraded|Native) Timelapse Macro Begin ---.*?; --- (?:Upgraded|Native) Timelapse Macro End ---\r?\n?",
+            "",
+            content,
+            flags=re.DOTALL
+        )
+
+        orig_seconds = 0
+        est_match = re.search(r";\s*estimated printing time.*?=\s*(.*)", content, re.IGNORECASE)
+        if est_match:
+            orig_seconds = self.parse_time_from_string(est_match.group(1))
+
+        if orig_seconds == 0:
+            print_time_match = re.search(r";\s*print_time\s*=\s*(.*)", content, re.IGNORECASE)
+            if print_time_match:
+                orig_seconds = self.parse_time_from_string(print_time_match.group(1))
+
+        if orig_seconds == 0:
+            time_match = re.search(r";TIME:(\d+)", content)
+            if time_match:
+                orig_seconds = int(time_match.group(1))
+
+        if "; AFTER_LAYER_CHANGE" in content:
+            raw_layers = re.split(r"(?=;\s*AFTER_LAYER_CHANGE)", content)
+        elif ";LAYER_CHANGE" in content:
+            raw_layers = re.split(r"(?=;LAYER_CHANGE)", content)
+        elif ";LAYER:" in content:
+            raw_layers = re.split(r"(?=;LAYER:\s*\d+)", content)
+        else:
+            raise ValueError("Could not locate layer markers in the G-code.")
+
+        shutter_x = float(self.shutter_x_var.get())
+        approach_dist = float(self.approach_dist_var.get())
+        pre_park_x = round(shutter_x - approach_dist, 2)
+        park_y = float(self.park_y_var.get())
+
+        anti_shake = max(0, int(self.anti_shake_var.get()))
+        btn_press = max(0, int(self.button_press_var.get()))
+        pause_after = max(0, int(self.pause_after_var.get()))
+        zhop = max(0.0, float(self.zhop_var.get()))
+        retract_enabled = self.retract_var.get()
+        ensure_final = self.ensure_final_var.get()
+
+        orig_e_mode = self.detect_extrusion_mode(raw_layers[0])
+
+        retract_dist = 0.8
+        travel_feed = 6000
+        z_feed = 3000
+
+        freq_map = {
+            "Every Layer": 1, "Every 2nd": 2, "Every 3rd": 3,
+            "Every 5th": 5, "Every 10th": 10, "Every 25th": 25
+        }
+        step_freq = freq_map.get(self.frequency_var.get(), 1)
+
+        total_added_seconds = 0.0
+        new_layers = []
+
+        for idx, layer_chunk in enumerate(raw_layers):
+            if idx >= 2 and (idx - 1) % step_freq == 0:
+                dist = 150.0
+                t_travel = (dist / (travel_feed / 60.0)) * 2.0
+                t_zhop = (zhop / (z_feed / 60.0)) * 2.0 if zhop > 0 else 0.0
+                t_switch = (approach_dist / 50.0) * 2.0
+                t_pauses = (anti_shake + btn_press + pause_after) / 1000.0
+                total_added_seconds += (t_travel + t_zhop + t_switch + t_pauses + 0.5)
+
+                macro = [
+                    "; --- Upgraded Timelapse Macro Begin ---",
+                    "M400 ; Wait for moves to finish",
+                    "M83 ; Force relative extrusion for safe retract" if retract_enabled else "",
+                    f"G1 E-{retract_dist:.2f} F3000 ; Retract" if retract_enabled else "",
+                    "G91 ; Relative positioning",
+                    f"G0 Z{zhop:.2f} F{z_feed} ; Lift Z-hop" if zhop > 0 else "",
+                    "G90 ; Absolute positioning",
+                    f"G0 X{pre_park_x:.2f} Y{park_y:.2f} F{travel_feed} ; Park at pre-click",
+                    "M400 ; Wait for stop",
+                    f"G4 P{anti_shake} ; Settle anti-shake" if anti_shake > 0 else "",
+                    f"G1 X{shutter_x:.2f} F3000 ; Press trigger",
+                    f"G4 P{btn_press} ; Hold trigger",
+                    f"G1 X{pre_park_x:.2f} F3000 ; Release trigger",
+                    f"G4 P{pause_after} ; Wait for camera" if pause_after > 0 else "",
+                    "G91 ; Relative positioning",
+                    f"G0 Z-{zhop:.2f} F{z_feed} ; Restore Z-hop" if zhop > 0 else "",
+                    "G90 ; Absolute positioning",
+                    f"G1 E{retract_dist:.2f} F2400 ; Prime nozzle" if retract_enabled else "",
+                    f"{orig_e_mode} ; Restore original extrusion mode" if retract_enabled else "",
+                    "M400 ; Finish",
+                    "; --- Upgraded Timelapse Macro End ---"
+                ]
+                clean_macro = "\n".join([cmd for cmd in macro if cmd])
+                new_layers.append(clean_macro + "\n" + layer_chunk)
+            else:
+                new_layers.append(layer_chunk)
+
+        if ensure_final:
+            final_block = (
+                "\n; --- Final Frame Timelapse ---\n"
+                "M400\n"
+                "G91\n"
+                f"G0 Z{zhop:.2f} F{z_feed}\n"
+                "G90\n"
+                f"G0 X{pre_park_x:.2f} Y{park_y:.2f} F{travel_feed}\n"
+                "M400\n"
+                f"G1 X{shutter_x:.2f} F3000\n"
+                f"G4 P{btn_press}\n"
+                f"G1 X{pre_park_x:.2f} F3000\n"
+                f"G4 P{pause_after}\n"
+            )
+            new_layers[-1] = new_layers[-1] + final_block
+
+        patched_content = "".join(new_layers)
+        new_total_seconds = int(orig_seconds + total_added_seconds)
+
+        if ";TIME:" in patched_content:
+            patched_content = re.sub(r";TIME:\d+", f";TIME:{new_total_seconds}", patched_content, count=1)
+        else:
+            patched_content = f";TIME:{new_total_seconds}\n" + patched_content
+
+        return patched_content, new_total_seconds
+
+    def patch_3mf_archive(self, src_3mf_path, dest_3mf_path):
+        """Extracts plate G-code inside a .gcode.3mf archive, patches it, updates MD5, and saves."""
+        total_seconds_all_plates = 0
+
+        with zipfile.ZipFile(src_3mf_path, "r") as zin:
+            namelist = zin.namelist()
+            plate_files = [n for n in namelist if re.match(r"^Metadata/plate_\d+\.gcode$", n, re.IGNORECASE)]
+
+            if not plate_files:
+                raise ValueError("No sliced G-code plates (Metadata/plate_*.gcode) found inside this 3MF file.")
+
+            updated_entries = {}
+            for plate_name in plate_files:
+                raw_gcode = zin.read(plate_name).decode("utf-8", errors="ignore")
+                patched_gcode, plate_secs = self.patch_gcode_text(raw_gcode)
+                encoded_gcode = patched_gcode.encode("utf-8")
+
+                updated_entries[plate_name] = encoded_gcode
+                total_seconds_all_plates += plate_secs
+
+                md5_name = f"{plate_name}.md5"
+                if md5_name in namelist:
+                    new_md5 = hashlib.md5(encoded_gcode).hexdigest().encode("ascii")
+                    updated_entries[md5_name] = new_md5
+
+            temp_out = dest_3mf_path + ".tmp"
+            with zipfile.ZipFile(temp_out, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    if item.filename in updated_entries:
+                        zout.writestr(item.filename, updated_entries[item.filename])
+                    else:
+                        zout.writestr(item, zin.read(item.filename))
+
+        os.replace(temp_out, dest_3mf_path)
+        return total_seconds_all_plates
+
     def start_processing(self):
         if self.is_processing:
             return
 
         src_path = self.filepath_var.get().strip()
         if not src_path or not os.path.isfile(src_path):
-            messagebox.showerror("Error", "Please select a valid .gcode file first.")
+            messagebox.showerror("Error", "Please select a valid .gcode or .gcode.3mf file first.")
             return
 
+        try:
+            float(self.shutter_x_var.get())
+            float(self.approach_dist_var.get())
+            float(self.park_y_var.get())
+            float(self.zhop_var.get())
+            int(self.anti_shake_var.get())
+            int(self.button_press_var.get())
+            int(self.pause_after_var.get())
+        except Exception:
+            messagebox.showerror("Invalid Input", "Please enter valid numeric values for all coordinates and timings.")
+            return
+
+        self.save_config()
         self.is_processing = True
         self.action_btn.configure(state="disabled")
         self.progress_bar.set_progress(0.0)
         self.status_var.set("Patching G-code layers...")
 
-        # Animate progress bar over ~1.0 second (25 steps x 40ms = 1000ms)
         self._animate_progress(step=0, total_steps=25)
 
     def _animate_progress(self, step, total_steps):
@@ -292,152 +529,59 @@ class AnycubicTimelapseApp:
 
     def process_gcode(self):
         src_path = self.filepath_var.get().strip()
+        is_3mf = src_path.lower().endswith(".3mf")
 
         try:
-            with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-
-            content = re.sub(
-                r"; --- (?:Upgraded|Native) Timelapse Macro Begin ---.*?; --- (?:Upgraded|Native) Timelapse Macro End ---\r?\n?",
-                "",
-                content,
-                flags=re.DOTALL
-            )
-
-            orig_seconds = 0
-            est_match = re.search(r";\s*estimated printing time.*?=\s*(.*)", content, re.IGNORECASE)
-            if est_match:
-                orig_seconds = self.parse_time_from_string(est_match.group(1))
-
-            if orig_seconds == 0:
-                print_time_match = re.search(r";\s*print_time\s*=\s*(.*)", content, re.IGNORECASE)
-                if print_time_match:
-                    orig_seconds = self.parse_time_from_string(print_time_match.group(1))
-
-            if orig_seconds == 0:
-                time_match = re.search(r";TIME:(\d+)", content)
-                if time_match:
-                    orig_seconds = int(time_match.group(1))
-
-            if "; AFTER_LAYER_CHANGE" in content:
-                raw_layers = re.split(r"(?=;\s*AFTER_LAYER_CHANGE)", content)
-            elif ";LAYER_CHANGE" in content:
-                raw_layers = re.split(r"(?=;LAYER_CHANGE)", content)
-            elif ";LAYER:" in content:
-                raw_layers = re.split(r"(?=;LAYER:\s*\d+)", content)
-            else:
-                self.progress_bar.set_progress(0.0)
-                messagebox.showerror("Error", "Could not locate layer markers in this G-code file.")
+            if self.slicer_mode:
+                if is_3mf:
+                    self.patch_3mf_archive(src_path, src_path)
+                else:
+                    with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    patched_content, _ = self.patch_gcode_text(content)
+                    with open(src_path, "w", encoding="utf-8") as out_f:
+                        out_f.write(patched_content)
+                self.root.destroy()
                 return
 
-            shutter_x = self.shutter_x_var.get()
-            approach_dist = self.approach_dist_var.get()
-            pre_park_x = round(shutter_x - approach_dist, 2)
-            park_y = self.park_y_var.get()
-
-            anti_shake = self.anti_shake_var.get()
-            btn_press = self.button_press_var.get()
-            pause_after = self.pause_after_var.get()
-            zhop = self.zhop_var.get()
-            retract_enabled = self.retract_var.get()
-            ensure_final = self.ensure_final_var.get()
-
-            retract_dist = 0.8
-            travel_feed = 6000
-            z_feed = 3000
-
-            freq_map = {
-                "Every Layer": 1, "Every 2nd": 2, "Every 3rd": 3,
-                "Every 5th": 5, "Every 10th": 10, "Every 25th": 25
-            }
-            step_freq = freq_map.get(self.frequency_var.get(), 1)
-
-            total_added_seconds = 0.0
-            new_layers = []
-
-            for idx, layer_chunk in enumerate(raw_layers):
-                if idx >= 2 and (idx - 1) % step_freq == 0:
-                    dist = 150.0
-                    t_travel = (dist / (travel_feed / 60.0)) * 2.0
-                    t_zhop = (zhop / (z_feed / 60.0)) * 2.0 if zhop > 0 else 0.0
-                    t_switch = (approach_dist / 50.0) * 2.0
-                    t_pauses = (anti_shake + btn_press + pause_after) / 1000.0
-                    total_added_seconds += (t_travel + t_zhop + t_switch + t_pauses + 0.5)
-
-                    macro = [
-                        "; --- Upgraded Timelapse Macro Begin ---",
-                        "M400 ; Wait for moves to finish",
-                        f"G1 E-{retract_dist:.2f} F3000 ; Retract" if retract_enabled else "",
-                        "G91 ; Relative positioning",
-                        f"G0 Z{zhop:.2f} F{z_feed} ; Lift Z-hop" if zhop > 0 else "",
-                        "G90 ; Absolute positioning",
-                        f"G0 X{pre_park_x:.2f} Y{park_y:.2f} F{travel_feed} ; Park at pre-click",
-                        "M400 ; Wait for stop",
-                        f"G4 P{anti_shake} ; Settle anti-shake" if anti_shake > 0 else "",
-                        f"G1 X{shutter_x:.2f} F3000 ; Press trigger",
-                        f"G4 P{btn_press} ; Hold trigger",
-                        f"G1 X{pre_park_x:.2f} F3000 ; Release trigger",
-                        f"G4 P{pause_after} ; Wait for camera" if pause_after > 0 else "",
-                        "G91 ; Relative positioning",
-                        f"G0 Z-{zhop:.2f} F{z_feed} ; Restore Z-hop" if zhop > 0 else "",
-                        "G90 ; Absolute positioning",
-                        f"G1 E{retract_dist:.2f} F2400 ; Prime nozzle" if retract_enabled else "",
-                        "M400 ; Finish",
-                        "; --- Upgraded Timelapse Macro End ---"
-                    ]
-                    clean_macro = "\n".join([cmd for cmd in macro if cmd])
-                    new_layers.append(clean_macro + "\n" + layer_chunk)
-                else:
-                    new_layers.append(layer_chunk)
-
-            if ensure_final:
-                final_block = (
-                    "\n; --- Final Frame Timelapse ---\n"
-                    "M400\n"
-                    "G91\n"
-                    f"G0 Z{zhop:.2f} F{z_feed}\n"
-                    "G90\n"
-                    f"G0 X{pre_park_x:.2f} Y{park_y:.2f} F{travel_feed}\n"
-                    "M400\n"
-                    f"G1 X{shutter_x:.2f} F3000\n"
-                    f"G4 P{btn_press}\n"
-                    f"G1 X{pre_park_x:.2f} F3000\n"
-                    f"G4 P{pause_after}\n"
-                )
-                new_layers[-1] = new_layers[-1] + final_block
-
-            patched_content = "".join(new_layers)
-            new_total_seconds = int(orig_seconds + total_added_seconds)
-
-            if ";TIME:" in patched_content:
-                patched_content = re.sub(r";TIME:\d+", f";TIME:{new_total_seconds}", patched_content, count=1)
+            if not is_3mf:
+                with open(src_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                patched_content, new_total_seconds = self.patch_gcode_text(content)
             else:
-                patched_content = f";TIME:{new_total_seconds}\n" + patched_content
+                with zipfile.ZipFile(src_path, "r") as zin:
+                    plate_files = [n for n in zin.namelist() if re.match(r"^Metadata/plate_\d+\.gcode$", n, re.IGNORECASE)]
+                    if not plate_files:
+                        raise ValueError("No sliced G-code plates found inside this 3MF file.")
+                    sample_gcode = zin.read(plate_files[0]).decode("utf-8", errors="ignore")
+                    _, new_total_seconds = self.patch_gcode_text(sample_gcode)
 
             new_h = new_total_seconds // 3600
             new_m = (new_total_seconds % 3600) // 60
             new_s = new_total_seconds % 60
             time_suffix = f"_{new_h}h{new_m}m{new_s}s" if new_h > 0 else f"_{new_m}m{new_s}s"
 
-            if self.slicer_mode:
-                # Overwrite the slicer's temporary G-code file in-place and close
-                with open(src_path, "w", encoding="utf-8") as out_f:
-                    out_f.write(patched_content)
-                self.root.destroy()
-                return
-
-            # Standalone Mode: prompt user where to save
             dir_name, full_file_name = os.path.split(src_path)
-            base_name, ext = os.path.splitext(full_file_name)
+            if full_file_name.lower().endswith(".gcode.3mf"):
+                base_name = full_file_name[:-10]
+                ext = ".gcode.3mf"
+                file_types = [("Orca/Bambu 3MF Files", "*.gcode.3mf"), ("All Files", "*.*")]
+            elif is_3mf:
+                base_name, ext = os.path.splitext(full_file_name)
+                file_types = [("3MF Files", "*.3mf"), ("All Files", "*.*")]
+            else:
+                base_name, ext = os.path.splitext(full_file_name)
+                file_types = [("G-code Files", "*.gcode"), ("All Files", "*.*")]
+
             clean_base = re.sub(r"_(\d+d)?(\d+h)?(\d+m)?(\d+s)?$", "", base_name, flags=re.IGNORECASE)
             suggested_name = f"{clean_base}_timelapse{time_suffix}{ext}"
 
             dest_path = filedialog.asksaveasfilename(
-                title="Save Patched G-code File As",
+                title="Save Patched File As",
                 initialdir=dir_name,
                 initialfile=suggested_name,
-                defaultextension=".gcode",
-                filetypes=[("G-code Files", "*.gcode"), ("All Files", "*.*")]
+                defaultextension=ext,
+                filetypes=file_types
             )
 
             if not dest_path:
@@ -445,14 +589,17 @@ class AnycubicTimelapseApp:
                 self.status_var.set("Save cancelled by user.")
                 return
 
-            with open(dest_path, "w", encoding="utf-8") as out_f:
-                out_f.write(patched_content)
+            if is_3mf:
+                new_total_seconds = self.patch_3mf_archive(src_path, dest_path)
+            else:
+                with open(dest_path, "w", encoding="utf-8") as out_f:
+                    out_f.write(patched_content)
 
             saved_filename = os.path.basename(dest_path)
             self.status_var.set(f"Done! Saved: {saved_filename}")
             messagebox.showinfo(
                 "Complete",
-                f"Timelapse G-code generated successfully!\n\n"
+                f"Timelapse file generated successfully!\n\n"
                 f"File Saved: {saved_filename}\n"
                 f"Total Duration: {time_suffix.strip('_')} ({new_total_seconds} seconds)"
             )
